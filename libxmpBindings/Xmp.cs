@@ -1,6 +1,5 @@
 ﻿namespace libxmpBindings;
 
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -10,103 +9,53 @@ using NAudio.Wave;
 public sealed class Xmp : IDisposable
 {
     public readonly unsafe sbyte* Context;
-    private readonly IWavePlayer _player;
     private readonly int _rate;
     private readonly XmpFormat _format;
     private readonly float _refillRatio;
     private bool _hasBeenDisposed = false;
     public unsafe Xmp(IWavePlayer player, int rate = 44100, XmpFormat format = XmpFormat.None, float refillRatio = 0.75f)
     {
-        _player = player;
+        Player = player;
         _rate = rate;
         _format = format;
         _refillRatio = refillRatio;
-        Context = libxmp.xmp_create_context();
+        try
+        {
+            Context = libxmp.xmp_create_context();
+        }
+        catch (DllNotFoundException)
+        {
+            Console.Error.WriteLine("The libxmp library could not be loaded. If you are running under Linux, try installing libxmp4 / libxmp-dev via your distribution's package manager.");
+            throw;
+        }
     }
+    public IWavePlayer Player { get; }
+    
 #region Play
-    public async Task PlayWithTimeout(IEnumerable<string> paths, TimeSpan timeout, bool loop = true, CancellationToken cancellationToken = default)
+    public async Task PlayListWithTimeoutAsync(string[] pathsArray, TimeSpan timeout, bool loop = true, CancellationToken cancellationToken = default)
     {
-        var pathsArray = paths.ToArray();
         do
         {
             foreach (string path in pathsArray)
             {
+                var songPlayTime = GetEstimatedTotalPlayTime(path);
+                var playingStart = DateTime.UtcNow;
                 await PlayAsync(path, false, cancellationToken: cancellationToken);
+                var played = DateTime.UtcNow - playingStart;
                 try
                 {
-                    await Task.Delay(timeout, cancellationToken);
+                    await Task.Delay(songPlayTime - played + timeout, cancellationToken);
                 }
                 catch (TaskCanceledException)
                 {
-                    return;
+                    //ignored
+                }
+                finally
+                {
+                    Player.Stop();
                 }
             }
         } while (loop && !cancellationToken.IsCancellationRequested);
-        
-    }
-    public static async Task PlayWithOverlap(Xmp xmp1, Xmp xmp2, IEnumerable<string> paths, float overlapPercentage = 1/16f, int loudnessSmoothingSteps = 100, bool loop = true, bool highPrecision = false, CancellationToken cancellationToken = default)
-    {
-        loudnessSmoothingSteps = Math.Clamp(loudnessSmoothingSteps, 1, 100);
-        var pathsArray = paths.ToArray();
-        Task player1;
-        do
-        {
-            var initialSong = pathsArray[0];
-            var initialTime = highPrecision ? xmp1.GetTotalPlayTime(initialSong) : xmp1.GetEstimatedTotalPlayTime(initialSong);
-            xmp1.LoadModule(initialSong);
-            xmp1.StartPlayer();
-            player1 = xmp1.PlayAsync(false, cancellationToken);
-            Debug.WriteLine("play xmp1");
-            var delayfix = DateTime.UtcNow;
-            for (int i = 1; i < pathsArray.Length; i++)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    return;
-                
-                var song2 = pathsArray[i];
-                var time = highPrecision ? xmp2.GetTotalPlayTime(initialSong) : xmp2.GetEstimatedTotalPlayTime(song2);
-                xmp2.LoadModule(song2);
-                xmp2.StartPlayer();
-                Debug.WriteLine("set xmp2 2 0");
-                xmp2.SetVolume(0);
-                var delayed = time * overlapPercentage / loudnessSmoothingSteps;
-                var delayfix2 = DateTime.UtcNow - delayfix;
-                try
-                {
-                    await Task.Delay(Math.Max((int)(initialTime * (1f - overlapPercentage) - delayfix2).TotalMilliseconds, 0), cancellationToken);
-                }
-                catch (TaskCanceledException)
-                {
-                    return;
-                }
-                Debug.WriteLine("play xmp2");
-                var player2 = xmp2.PlayAsync(false, cancellationToken);
-                delayfix = DateTime.UtcNow;
-                for (int j = loudnessSmoothingSteps - 1; j >= 0; j--)
-                {
-                    if (xmp1.GetPlayerState() == XmpPlayerStates.Playing)
-                        xmp1.SetVolume((100 / loudnessSmoothingSteps) * j);
-                    xmp2.SetVolume((100 / loudnessSmoothingSteps) * (loudnessSmoothingSteps - j));
-                    try
-                    {
-                        await Task.Delay(delayed, cancellationToken);
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        return;
-                    }
-                }
-                Debug.WriteLine("set xmp2 2 100");
-                xmp2.SetVolume(100);
-                await player1;
-                Debug.WriteLine("Swap");
-                (xmp1, xmp2) = (xmp2, xmp1);
-                initialTime = time;
-                player1 = player2;
-            }
-        } while (loop && !cancellationToken.IsCancellationRequested);
-        if (!player1.IsCompleted)
-            await player1;
     }
     public async Task<bool> PlayAsync(string path, bool loop = true, CancellationToken cancellationToken = default)
     {
@@ -159,11 +108,11 @@ public sealed class Xmp : IDisposable
             StartPlayer();
         }
         var waveProvider = new BufferedWaveProvider(new WaveFormat(_rate, _format.HasFlag(XmpFormat.Eightbit) ? 8 : 16, _format.HasFlag(XmpFormat.Mono) ? 1 : 2));
-        _player.Init(waveProvider);
+        Player.Init(waveProvider);
         byte[] buffer = new byte[(int)XmpLimits.MaxFramesize];
-        _player.Play();
+        Player.Play();
         var refillDuration = waveProvider.BufferDuration * _refillRatio;
-        while (PlayFrame(buffer.AsSpan(), out int length, out int loopcounter) && (loop || loopcounter == 0) && !cancellationToken.IsCancellationRequested)
+        while (PlayFrame(buffer, out int length, out int loopcounter) && (loop || loopcounter == 0) && !cancellationToken.IsCancellationRequested)
         {
             while (waveProvider.BufferedBytes >= waveProvider.BufferLength - length)
             {
@@ -174,6 +123,7 @@ public sealed class Xmp : IDisposable
         EndPlayer();
         ReleaseModule();
     }
+
     private async Task PlayInternal(int buffersize, bool loop, CancellationToken cancellationToken)
     {
         if (GetPlayerState() == XmpPlayerStates.Loaded)
@@ -182,8 +132,8 @@ public sealed class Xmp : IDisposable
         }
         var waveProvider = new BufferedWaveProvider(new WaveFormat(_rate, _format.HasFlag(XmpFormat.Eightbit) ? 8 : 16, _format.HasFlag(XmpFormat.Mono) ? 1 : 2));
         byte[] buffer = new byte[buffersize];
-        _player.Init(waveProvider);
-        _player.Play();
+        Player.Init(waveProvider);
+        Player.Play();
         var refillDuration = waveProvider.BufferDuration * _refillRatio;
         while (PlayBuffer(buffer, loop) && !cancellationToken.IsCancellationRequested)
         {
@@ -195,10 +145,20 @@ public sealed class Xmp : IDisposable
         }
         EndPlayer();
         ReleaseModule();
+        await Task.Delay(refillDuration * 2, CancellationToken.None);
+        Player.Stop();
     }
     public Task PlayAsync(int buffersize, bool loop = true, CancellationToken cancellationToken = default)
     {
         return PlayInternal(buffersize, loop, cancellationToken);
+    }
+    public unsafe bool PlayFrame(out Span<byte> buffer, out int length, out int loopcounter)
+    {
+        var ret = PlayFrame(out var fi);
+        buffer = new Span<byte>(fi.buffer, fi.buffer_size);
+        length = fi.buffer_size;
+        loopcounter = fi.loop_count;
+        return ret;
     }
     public unsafe bool PlayFrame(Span<byte> buffer, out int length, out int loopcounter)
     {
@@ -300,6 +260,12 @@ public sealed class Xmp : IDisposable
         _ = IsInInvalidState(error);
         return error;
     }
+
+    public int SetInterpolation(XmpInterpolations interpolations)
+    {
+        return SetParameter(XmpPlayerParameters.Interp, (int)interpolations);
+    }
+    
     public record TestInfo(string Name, string Format);
     public static unsafe bool TestModule(string path, [NotNullWhen(true)] out TestInfo? testInfo)
     {
@@ -410,7 +376,7 @@ public sealed class Xmp : IDisposable
     {
         try
         {
-            _player.Dispose();
+            Player.Dispose();
         }
         catch (Exception)
         {

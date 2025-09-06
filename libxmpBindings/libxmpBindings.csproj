@@ -7,16 +7,19 @@
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <Configurations>Debug;Release</Configurations>
+        <Platforms>AnyCPU;x64</Platforms>
     </PropertyGroup>
-
-    <ItemGroup>
-        <None Remove="libxmp.dll" />
-        <Content Include="libxmp.dll">
-          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-    </ItemGroup>
+    
     <ItemGroup>
       <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <None Remove="libxmp.dll" />
+      <Content Include="libxmp.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
     </ItemGroup>
 
 </Project>
