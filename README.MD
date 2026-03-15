@@ -1,4 +1,5 @@
 ﻿# C# Bindings for libxmp
+## but for [SoundFlow .NET](https://github.com/LSXPrime/SoundFlow/)!
 libxmp is a software written in C to playback oldschool tracker (.it, .mod, etc.) files.  
 Sadly there is no (to my knowledge) software thats similar and has a permissive license written in C#.  
 So i made bindings.  
