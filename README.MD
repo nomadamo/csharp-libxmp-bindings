@@ -2,7 +2,7 @@
 ## but for [SoundFlow .NET](https://github.com/LSXPrime/SoundFlow/)!
 libxmp is a software written in C to playback oldschool tracker (.it, .mod, etc.) files.  
 Sadly there is no (to my knowledge) software thats similar and has a permissive license written in C#.  
-So i made bindings.  
+So [i](https://github.com/bartimaeusnek) made [bindings](https://github.com/bartimaeusnek/csharp-libxmp-bindings).
 
 ## Usage
 Install any NAudio backend via nuget, use DirectSound (Windows only) or write your own ``IWavePlayer`` backend. Then initialise the Xmp class with any ``IWavePlayer`` backend. I.E:  
